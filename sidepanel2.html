@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>دستیار هوشمند پشتیبانی صرافی</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;700&display=swap" rel="stylesheet">
+    
+    <style>
+        /* تعریف متغیرهای CSS بر اساس مستندات */
+        :root {
+            --bg-main: #0b0f19;
+            --bg-glass-card: linear-gradient(135deg, rgba(30, 37, 54, 0.55), rgba(15, 20, 32, 0.8));
+            --bg-input: rgba(11, 14, 22, 0.95);
+            --text-main: #cbd5e1;
+            --accent-blue: #3b82f6;
+            --accent-gold: #fbbf24;
+            --accent-green: #10b981;
+            --accent-red: #f43f5e;
+            --accent-purple: #c084fc;
+            --border-glass: rgba(255, 255, 255, 0.08);
+        }
+
+        /* تنظیمات پایه بادی */
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            font-family: 'Vazirmatn', sans-serif;
+            margin: 0;
+            padding: 12px;
+            direction: rtl;
+            user-select: none; /* عدم امکان انتخاب متن در بادی */
+            box-sizing: border-box;
+            overflow-x: hidden;
+        }
+
+        *, *::before, *::after {
+            box-sizing: inherit;
+        }
+
+        /* اسکرول‌بار سفارشی مدرن */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.1);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--accent-blue);
+        }
+
+        /* ساختار هدر چسبنده */
+        header {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: rgba(11, 15, 25, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-glass);
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+
+        .header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        /* لوگوی کریستالی */
+        .logo-crystal {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-purple), var(--accent-blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 15px rgba(192, 132, 252, 0.3);
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        select, input, textarea {
+            background: var(--bg-input);
+            border: 1px solid var(--border-glass);
+            color: var(--text-main);
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-family: 'Vazirmatn', sans-serif;
+            font-size: 13px;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        select:focus, input:focus, textarea:focus {
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 8px rgba(59, 130, 246, 0.3);
+        }
+
+        .btn-icon {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-glass);
+            color: var(--text-main);
+            border-radius: 8px;
+            width: 34px;
+            height: 34px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-icon:hover {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: var(--text-main);
+        }
+
+        /* نوار صندلی‌ها */
+        .slots-bar {
+            display: flex;
+            gap: 6px;
+            width: 100%;
+        }
+
+        .slot-btn {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-glass);
+            color: #64748b;
+            padding: 6px 0;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        .slot-btn.active {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(192, 132, 252, 0.2));
+            border-color: var(--accent-blue);
+            color: #fff;
+            box-shadow: inset 0 0 6px rgba(59, 130, 246, 0.2);
+        }
+
+        /* کانتینر اصلی شیشه‌ای */
+        .gradient-glass-box {
+            background: var(--bg-glass-card);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-glass);
+            border-radius: 12px;
+            padding: 14px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            margin-bottom: 15px;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .form-row select, .form-row input {
+            flex: 1;
+            width: 33%;
+        }
+
+        .textarea-wrapper {
+            margin-bottom: 12px;
+        }
+
+        .textarea-wrapper label {
+            display: block;
+            font-size: 11px;
+            color: #94a3b8;
+            margin-bottom: 4px;
+            font-weight: 500;
+        }
+
+        textarea.fixed-height {
+            width: 100%;
+            height: 75px;
+            resize: none;
+            display: block;
+        }
+
+        /* دکمه اصلی اکشن */
+        .btn-trigger {
+            width: 100%;
+            background: linear-gradient(90deg, #1d4ed8, var(--accent-blue));
+            border: none;
+            color: white;
+            padding: 10px;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        }
+
+        .btn-trigger:hover {
+            filter: brightness(1.1);
+            box-shadow: 0 4px 16px rgba(59, 130, 246, 0.5);
+        }
+
+        /* بخش خروجی‌ها */
+        .outputs-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .tabs-container {
+            display: flex;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 3px;
+            border-radius: 8px;
+            border: 1px solid var(--border-glass);
+        }
+
+        .tab-btn {
+            background: transparent;
+            border: none;
+            color: #64748b;
+            padding: 4px 12px;
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .tab-btn.active {
+            background: var(--bg-input);
+            color: var(--accent-gold);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .suggestion-box {
+            position: relative;
+            background: rgba(0, 0, 0, 0.15);
+            border: 1px solid var(--border-glass);
+            border-radius: 8px;
+            padding: 12px;
+            max-height: 180px;
+            overflow-y: auto;
+            display: none;
+            margin-bottom: 15px;
+        }
+
+        .suggestion-box.visible {
+            display: block;
+        }
+
+        .output-text-content {
+            font-size: 13px;
+            line-height: 1.6;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+            user-select: text; /* خروجی قابل انتخاب است */
+            padding-left: 45px; /* فضا برای دکمه‌های شناور */
+        }
+
+        /* اکشن‌های شناور */
+        .floating-actions {
+            position: absolute;
+            left: 8px;
+            top: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            opacity: 0.8;
+            transition: opacity 0.2s;
+        }
+
+        .floating-actions:hover {
+            opacity: 1;
+        }
+
+        .btn-float {
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid var(--border-glass);
+            color: #94a3b8;
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+
+        .btn-float:hover {
+            color: white;
+            background: var(--bg-input);
+        }
+
+        .btn-float.copied {
+            background: var(--accent-green) !important;
+            color: white !important;
+        }
+
+        /* دکمه‌های آرکیتایپ لحن */
+        .archetypes-container {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px;
+            margin-bottom: 15px;
+        }
+
+        .btn-arch {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-glass);
+            color: var(--text-main);
+            padding: 6px 0;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        #btn-arch-normal:hover { border-color: var(--text-main); background: rgba(255,255,255,0.08); }
+        #btn-arch-zeus:hover { border-color: var(--accent-gold); background: rgba(251,191,36,0.1); color: var(--accent-gold); }
+        #btn-arch-hestia:hover { border-color: var(--accent-green); background: rgba(16,185,129,0.1); color: var(--accent-green); }
+        #btn-arch-hades:hover { border-color: var(--accent-purple); background: rgba(192,132,252,0.1); color: var(--accent-purple); }
+
+        /* بخش تاریخچه چت */
+        .history-section-title {
+            font-size: 12px;
+            color: #64748b;
+            margin-bottom: 8px;
+            font-weight: 700;
+            padding-right: 2px;
+        }
+
+        #output-display-card {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-glass);
+            border-radius: 10px;
+            padding: 10px;
+            max-height: 220px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .chat-bubble {
+            max-width: 85%;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 12.5px;
+            line-height: 1.5;
+            word-wrap: break-word;
+            user-select: text;
+        }
+
+        .chat-bubble.user {
+            background: rgba(59, 130, 246, 0.15);
+            border: 1px solid rgba(59, 130, 246, 0.25);
+            color: #eff6ff;
+            align-self: flex-start;
+            border-top-right-radius: 2px;
+        }
+
+        .chat-bubble.bot {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border-glass);
+            color: #f1f5f9;
+            align-self: flex-end;
+            border-top-left-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-top">
+            <div class="logo-crystal">Ai</div>
+            <div class="header-actions">
+                <select id="select-active-agent">
+                    <option value="gemini-flash">Gemini Flash</option>
+                    <option value="gemini-pro">Gemini Pro</option>
+                    <option value="custom-agent">Custom Agent</option>
+                </select>
+                <button class="btn-icon" id="btn-open-database" title="پایگاه داده">💾</button>
+                <button class="btn-icon" id="btn-open-radar" title="رادار">📡</button>
+            </div>
+        </div>
+        
+        <div class="slots-bar">
+            <button class="slot-btn active" id="slot-0">کاربر ۱</button>
+            <button class="slot-btn" id="slot-1">کاربر ۲</button>
+            <button class="slot-btn" id="slot-2">کاربر ۳</button>
+        </div>
+    </header>
+
+    <main class="gradient-glass-box">
+        <div class="form-row">
+            <select id="select-topic">
+                <option value="">موضوع چت...</option>
+                <option value="تعهدی">تعهدی</option>
+                <option value="احراز هویت">احراز هویت</option>
+                <option value="مالی">مالی</option>
+                <option value="فنی">فنی</option>
+                <option value="عمومی">عمومی</option>
+            </select>
+            
+            <select id="select-gender">
+                <option value="unknown">جنسیت...</option>
+                <option value="آقا">آقا</option>
+                <option value="خانم">خانم</option>
+            </select>
+            
+            <input type="text" id="input-client-name" placeholder="نام مشتری..." autocomplete="off">
+        </div>
+
+        <div class="textarea-wrapper">
+            <label for="history-raw-input">تاریخچه خام (CRM)</label>
+            <textarea id="history-raw-input" class="fixed-height" placeholder="متن کپی شده از چت یا تاریخچه سیستم را اینجا بگذارید..."></textarea>
+        </div>
+
+        <div class="textarea-wrapper">
+            <label for="draft-input">پیش‌نویس کارشناس</label>
+            <textarea id="draft-input" class="fixed-height" placeholder="نکات کلیدی یا پیش‌نویس پاسخ خود را بنویسید..."></textarea>
+        </div>
+
+        <button id="btn-trigger-analysis" class="btn-trigger">تحلیل و فرمول‌بندی پاسخ</button>
+    </main>
+
+    <section>
+        <div class="outputs-header">
+            <button id="btn-wipe-current-slot" class="btn-icon" style="color: var(--accent-red);" title="پاکسازی ذهن اسلات فعلی">🧹</button>
+            <div class="tabs-container">
+                <button id="tab-quick" class="tab-btn active">پاسخ کوتاه</button>
+                <button id="tab-detailed" class="tab-btn">پاسخ تشریحی</button>
+            </div>
+        </div>
+
+        <div idbox-type="quick" class="suggestion-box visible" id="box-container-quick">
+            <div class="output-text-content" id="output-quick">در انتظار پردازش داده‌ها...</div>
+            <div class="floating-actions">
+                <button class="btn-float" id="btn-copy-quick" title="کپی متن">📋</button>
+                <button class="btn-float" id="btn-like-quick" title="افزودن به منتخب">🖤</button>
+                <button class="btn-float" id="btn-expand-quick" title="گسترش آنی (موشک)">🚀</button>
+            </div>
+        </div>
+
+        <div idbox-type="detailed" class="suggestion-box" id="box-container-detailed">
+            <div class="output-text-content" id="output-detailed">در انتظار پردازش داده‌ها...</div>
+            <div class="floating-actions">
+                <button class="btn-float" id="btn-copy-detailed" title="کپی متن">📋</button>
+                <button class="btn-float" id="btn-like-detailed" title="افزودن به منتخب">🖤</button>
+                <button class="btn-float" id="btn-expand-detailed" title="گسترش آنی (موشک)">🚀</button>
+            </div>
+        </div>
+    </section>
+
+    <div class="history-section-title">بازنویسی سریع با لحن آرکیتایپ:</div>
+    <div class="archetypes-container">
+        <button class="btn-arch" id="btn-arch-normal">عادی</button>
+        <button class="btn-arch" id="btn-arch-zeus">زئوس</button>
+        <button class="btn-arch" id="btn-arch-hestia">هستیا</button>
+        <button class="btn-arch" id="btn-arch-hades">هادس</button>
+    </div>
+
+    <div class="history-section-title">نمایش گفتگوهای فعال اسلات:</div>
+    <div id="output-display-card">
+        <div class="chat-bubble bot">سیستم آماده دریافت اطلاعات کاربر است. اسلات فعال بارگذاری شد.</div>
+    </div>
+
+    <script src="sidepanel.js"></script>
+</body>
+</html>
