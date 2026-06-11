@@ -1,483 +1,660 @@
-// مدیریت مقتدرانه وضعیت اسلات‌ها (State Management)
-let currentSlot = 0;
-let slots = [null, null, null];
+``javascript:sidepanel.js
+// ============================================================================
+// 🧠 هسته فرماندهی دستیار (sidepanel.js) - نسخه ۹.۰.۰۱ (تکامل نهایی و پایداری)
+// مجهز به مهار هویت پویا، پایش مقدمات تیکت، پدافند زرهی TPM و بازتولید متحرک [cite: image_980d27.png]
+// ============================================================================
 
-// ساختار داده‌ای خالی برای هر اسلات
-function createEmptySlot() {
+const MAX_SLOTS = 3;
+let activeSlotIndex = 0;
+let isStreamingActive = false;
+
+// متغیرهای موقت کش جهت نگهداری ساختار آخرین درخواست برای مدول بازتولید اکسپرس
+let lastPromptCache = "";
+let lastSystemKnowledgeCache = "";
+
+function createEmptySlot(index) {
     return {
-        history: [
-            { sender: 'bot', text: 'سیستم آماده دریافت اطلاعات کاربر است. اسلات فعال بارگذاری شد.' }
-        ],
-        historyRaw: '',
-        draft: '',
-        topic: '',
-        gender: 'unknown',
-        clientName: '',
-        activeAgent: 'gemini-flash',
-        outputQuick: 'در انتظار پردازش داده‌ها...',
-        outputDetailed: 'در انتظار پردازش داده‌ها...',
-        currentArchetype: 'normal'
+        id: index,
+        history: [], 
+        rawHistoryInput: '', 
+        draftInput: '', 
+        customerName: '',
+        customerGender: 'male', 
+        selectedModel: 'gemini-3.1-flash-lite',
+        lastQuickOutput: 'منتظر دریافت اطلاعات...',
+        lastDetailedOutput: 'منتظر دریافت اطلاعات...',
+        activeTab: 'detailed',
+        activeArchetype: 'normal'
     };
 }
 
-// ذخیره‌سازی وضعیت کل اسلات‌ها در حافظه محلی افزونه
+let slots = [createEmptySlot(0), createEmptySlot(1), createEmptySlot(2)];
+function getActiveSlot() { return slots[activeSlotIndex]; }
+
 function saveSlotsState() {
-    chrome.storage.local.set({ 
-        'cached_slots_data': slots,
-        'active_slot_index': currentSlot
-    }, () => {
-        console.log('وضعیت اسلات‌ها با موفقیت همگام‌سازی شد.');
+    chrome.storage.local.set({ appSlotsState: slots });
+}
+
+function loadSlotsState(callback) {
+    chrome.storage.local.get(['appSlotsState'], (res) => {
+        if (res.appSlotsState && res.appSlotsState.length === MAX_SLOTS) {
+            slots = res.appSlotsState;
+        }
+        if (callback) callback();
     });
 }
 
-// بارگذاری وضعیت اسلات‌ها از حافظه محلی
-function loadSlotsState() {
-    chrome.storage.local.get(['cached_slots_data', 'active_slot_index'], (result) => {
-        if (result.cached_slots_data && Array.isArray(result.cached_slots_data)) {
-            slots = result.cached_slots_data;
-        } else {
-            slots = [createEmptySlot(), createEmptySlot(), createEmptySlot()];
-        }
-        
-        if (typeof result.active_slot_index === 'number' && result.active_slot_index >= 0 && result.active_slot_index <= 2) {
-            currentSlot = result.active_slot_index;
-        } else {
-            currentSlot = 0;
-        }
-        
-        updateSlotTabsUI();
-        renderActiveSlotToUI();
-    });
-}
-
-// تغییر وضعیت بصری دکمه‌های اسلات‌ها
-function updateSlotTabsUI() {
-    for (let i = 0; i < 3; i++) {
-        const btn = document.getElementById(`slot-${i}`);
-        if (btn) {
-            if (i === currentSlot) {
-                btn.classList.add('active');
-            } else {
-                btn.classList.remove('active');
-            }
-        }
-    }
-}
-
-// نمایش اطلاعات اسلات انتخاب شده در رابط کاربری
-function renderActiveSlotToUI() {
-    const slot = slots[currentSlot];
-    if (!slot) return;
-
-    document.getElementById('history-raw-input').value = slot.historyRaw || '';
-    document.getElementById('draft-input').value = slot.draft || '';
-    document.getElementById('select-topic').value = slot.topic || '';
-    document.getElementById('select-gender').value = slot.gender || 'unknown';
-    document.getElementById('input-client-name').value = slot.clientName || '';
-    document.getElementById('select-active-agent').value = slot.activeAgent || 'gemini-flash';
+function cleanCRMHistory(rawText) {
+    if (!rawText) return '';
+    const timeStampRegex = /(فروردین|اردیبهشت|خرداد|خرد|تیر|مرداد|شهریور|مهر|آبان|آذر|دی|بهمن|اسفند)\s+\d{1,2}[،,]\s+\d{1,2}:\d{2}\s*(ق\.ظ\.|ب\.ظ\.|ق\.ظ|ب\.ظ|AM|PM)?/g;
+    const standardTimeRegex = /\d{4}\/\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}(:\d{2})?/g;
     
-    document.getElementById('output-quick').textContent = slot.outputQuick || 'در انتظار پردازش داده‌ها...';
-    document.getElementById('output-detailed').textContent = slot.outputDetailed || 'در انتظار پردازش داده‌ها...';
-
-    // ریست کردن آیکون‌های لایک بر اساس وجود پاسخ در دیتابیس منتخبین
-    checkLikeStatusRemote(slot.outputQuick, 'btn-like-quick');
-    checkLikeStatusRemote(slot.outputDetailed, 'btn-like-detailed');
-
-    // رندر حباب‌های تاریخچه چت
-    const historyCard = document.getElementById('output-display-card');
-    historyCard.innerHTML = '';
-    
-    if (slot.history && slot.history.length > 0) {
-        slot.history.forEach(msg => {
-            const bubble = document.createElement('div');
-            bubble.classList.add('chat-bubble', msg.sender === 'user' ? 'user' : 'bot');
-            bubble.textContent = msg.text;
-            historyCard.appendChild(bubble);
-        });
-    }
-    historyCard.scrollTop = historyCard.scrollHeight;
+    let cleaned = rawText.replace(timeStampRegex, '');
+    cleaned = cleaned.replace(standardTimeRegex, '');
+    cleaned = cleaned.replace(/^\s*[\r\n]/gm, '').trim(); 
+    return cleaned;
 }
 
-// به‌روزرسانی زنده مقادیر ورودی‌ها در ساختار داده اسلات فعال هنگام تایپ یا تغییر
-function syncCurrentInputToState() {
-    if (!slots[currentSlot]) return;
-    slots[currentSlot].historyRaw = document.getElementById('history-raw-input').value;
-    slots[currentSlot].draft = document.getElementById('draft-input').value;
-    slots[currentSlot].topic = document.getElementById('select-topic').value;
-    slots[currentSlot].gender = document.getElementById('select-gender').value;
-    slots[currentSlot].clientName = document.getElementById('input-client-name').value;
-    slots[currentSlot].activeAgent = document.getElementById('select-active-agent').value;
-    saveSlotsState();
+function sanitizeStreamData(rawText) {
+    if (!rawText) return '';
+    let clean = rawText.trim();
+    clean = clean.replace(/^\{"success"\s*:\s*true\s*,\s*"reply"\s*:\s*"/g, '');
+    clean = clean.replace(/"\s*\}\s*$/g, '');
+    clean = clean.replace(/\\n/g, '\n');
+    clean = clean.replace(/\\"|""/g, '"');
+    clean = clean.replace(/\\r/g, '');
+    clean = clean.replace(/\\/g, '');
+    if (clean.startsWith('"')) clean = clean.substring(1);
+    if (clean.endsWith('"')) clean = clean.substring(0, clean.length - 1);
+    return clean.trim();
 }
 
-// پایشگرهای رویداد تغییرات فرم‌ها
-['history-raw-input', 'draft-input'].forEach(id => {
-    document.getElementById(id).addEventListener('input', syncCurrentInputToState);
-});
-['select-topic', 'select-gender', 'select-active-agent'].forEach(id => {
-    document.getElementById(id).addEventListener('change', syncCurrentInputToState);
-});
-document.getElementById('input-client-name').addEventListener('input', syncCurrentInputToState);
-
-
-// سوئیچ مقتدرانه بین کاربران (Slots)
-for (let i = 0; i < 3; i++) {
-    document.getElementById(`slot-${i}`).addEventListener('click', () => {
-        syncCurrentInputToState(); // ذخیره آخرین تغییرات اسلات فعلی قبل از سوئیچ
-        currentSlot = i;
-        updateSlotTabsUI();
-        renderActiveSlotToUI();
-        saveSlotsState();
-    });
-}
-
-// تابع پاکسازی تاریخچه CRM از تاریخ و زمان‌های شمسی و انگلیسی با رگکس دقیق
-function cleanCRMHistory(text) {
-    if (!text) return "";
-    
-    // ۱. رگکس برای حذف الگوهایی نظیر "فروردین ۱۲، ۱۰:۳۰ ق.ظ" یا "اسفند ۲۸، ۱۶:۴۵ ب.ظ"
-    const jalaliLongPattern = /(?:فروردین|اردیبهشت|خرداد|تیر|مرداد|شهریور|مهر|آبان|آذر|دی|بهمن|اسفند)\s+[\u06f0-\u06f9\d]{1,2}(?:،)?\s+[\u06f0-\u06f9\d]{1,2}:[\u06f0-\u06f9\d]{1,2}(?:\s*(?:ق\.ظ|ب\.ظ))?/g;
-    
-    // ۲. رگکس برای حذف فرمت‌های عددی استاندارد و فارسی مثل 1402/01/12 10:30 یا 2024-03-11 08:12:00
-    const numericDateTimePattern = /(?:[\u06f0-\u06f9\d]{2,4}[\/\-][\u06f0-\u06f9\d]{1,2}[\/\-][\u06f0-\u06f9\d]{1,2})\s+[\u06f0-\u06f9\d]{1,2}:[\u06f0-\u06f9\d]{1,2}(?:\s*(?:ق\.ظ|ب\.ظ))?/g;
-    
-    let cleaned = text.replace(jalaliLongPattern, "");
-    cleaned = cleaned.replace(numericDateTimePattern, "");
-    return cleaned.trim();
-}
-
-// تابع پاکسازی بک‌اسلش‌ها و ناهنجاری‌های جریانات داده‌ای JSON استریم
-function sanitizeStreamData(text) {
-    if (!text) return "";
-    let clean = text.replace(/\\n/g, "\n");
-    clean = clean.replace(/\\"/g, '"');
-    clean = clean.replace(/\\\\/g, "\\");
-    return clean;
-}
-
-// تابع تشخیص شیفت کاری بر اساس ساعت سیستم
 function getShiftContext() {
     const hour = new Date().getHours();
-    if (hour >= 0 && hour < 6) {
-        return "بامداد (بازه نیمه‌شب تا ۶ صبح)";
-    } else if (hour >= 6 && hour < 12) {
-        return "صبح (بازه ۶ صبح تا ۱۲ ظهر)";
-    } else if (hour >= 12 && hour < 17) {
-        return "عصر (بازه ۱۲ ظهر تا ۵ عصر)";
-    } else {
-        return "شب (بازه ۵ عصر تا آخر شب)";
-    }
+    let shift = "بامداد";
+    if (hour >= 6 && hour < 12) shift = "صبح";
+    else if (hour >= 12 && hour < 18) shift = "عصر";
+    else if (hour >= 18 && hour < 24) shift = "شب";
+    return `🕒 [زمان آگاهی سیستم]: اکنون زمان شیفت "${shift}" صرافی است. احوال‌پرسی‌ها را با این اتمسفر هماهنگ کن.`;
 }
 
-// آبجکت آرکیتایپ‌های چهارگانه لحن پاسخدهی
 const ARCHETYPES = {
-    normal: "لحن متداول، محترمانه، راهنما و استاندارد صرافی رمزارز.",
-    zeus: "لحنی مقتدر، قاطع، کاملاً رسمی، بدون تکلف و تعارفات اضافی، متکی بر قوانین و بندهای سفت و سخت پلتفرم.",
-    hestia: "لحنی به شدت همدلانه، صمیمانه، آرامش‌بخش، همراه با درک عمیق استرس کاربر و تمرکز بر رفع نگرانی او.",
-    hades: "لحنی بسیار فنی، مهندسی، مینی‌مال، متمایل به جزئیات بلاکچینی، تراکنش‌ها، هش‌ها و متغیرهای زیرساختی سیستم بدون حاشیه‌پردازی."
+    normal: 'پاسخ قبلی را به یک لحن کاملا استاندارد، پیش‌فرض، خنثی و بدون هیچ‌گونه مبالغه روانی یا قاطعیتِ بیش از حد تبدیل کن.',
+    zeus: 'پاسخ قبلی را بازنویسی کن. لحن تو باید کاملاً مدرن، خنثی، اما به شدت قاطع، رسمی، محکم و مقتدر باشد. تمام تعارفات سنتی اداری، ادبیات بروکراسی دولتی و کلمات قلمبه‌سلمبه را کاملاً حذف کن. کوتاه، محکم و قفل روی بندهای قوانین صرافی بیت‌پین بدون یک گام عقب‌نشینی.',
+    hestia: 'پاسخ قبلی را بازنویسی کن با لحن به شدت صمیمی، همدلانه، پذیرنده و آرام‌بخش تا تنش روانی مشتری شاکی کاملاً خنثی شود.',
+    hades: 'پاسخ قبلی را بازنویسی کن. لحن تو باید کاملاً فنی، مهندسی، گام‌به‌گام و مینی‌مال باشد. از حاشیه‌پردازی‌های فلسفی بی‌ربط و ایجاد ابهام بیهوده اکیداً خودداری کن. تمام تمرکز پاسخ را منحصراً روی فاکتورهای قطعی شبکه بلاکچین (مانند کدهای هش تایید TXID، وضعیت کانفرمیشن نودها، بررسی تایید ممو و کارمزد شبکه) بگذار.'
 };
 
-// موتور هوشمند پردازش و آنالیز اصلی جریان داده (Streaming Engine)
-function runCoreAnalysisEngine(mode, targetText = null) {
-    const slot = slots[currentSlot];
-    if (!slot) return;
+document.addEventListener('DOMContentLoaded', () => {
 
-    // متغیرهای ساخت پرامپت
-    const cleanedHistory = cleanCRMHistory(slot.historyRaw);
-    const draftContent = slot.draft;
-    const topic = slot.topic ? `موضوع مربوطه: ${slot.topic}` : "موضوع عمومی";
-    const currentShift = getShiftContext();
-    const archetypePrompt = ARCHETYPES[slot.currentArchetype || 'normal'];
-
-    let prompt = `شما یک دستیار هوشمند فوق پیشرفته برای پشتیبانی یک صرافی بزرگ کریپتوکارنسی هستید.\n`;
-    prompt += `موقعیت زمانی سیستم: شیفت ${currentShift}\n`;
-    prompt += `لحن درخواستی جهت اعمال: ${archetypePrompt}\n`;
+    const tabButtons       = document.querySelectorAll('.slot-tab');
+    const historyInput     = document.getElementById('history-raw-input');
+    const draftInput       = document.getElementById('draft-input');
+    const customerName     = document.getElementById('customer-name-input');
+    const customerGender   = document.getElementById('customer-gender-select');
+    const issueTagSelect   = document.getElementById('issue-tag-select');
     
-    // قفل هویتی
-    if (slot.clientName && slot.clientName.trim() !== "") {
-        const genderTitle = slot.gender !== 'unknown' ? slot.gender : "";
-        prompt += `هویت مشتری مشخص است: ${genderTitle} ${slot.clientName}. لحن را متناسب با این نام و هویت تنظیم کنید و در خوش‌آمدگویی یا بدنه متن به درستی استفاده کنید.\n`;
-    } else {
-        prompt += `اکیداً و مطلقاً استفاده از عناوین کلی مانند 'آقا' یا 'خانم' ممنوع است، چون هویت مشتری مجهول است. بدون استفاده از پیشوندهای جنسیتی عمومی صحبت کنید.\n`;
+    const analyzeBtn       = document.getElementById('btn-trigger-analysis');
+    const outputCard       = document.getElementById('output-display-card');
+    const modelSelect      = document.getElementById('select-active-agent');
+    const wipeSlotBtn      = document.getElementById('btn-wipe-current-slot');
+    const openDatabaseBtn  = document.getElementById('btn-open-database');
+    
+    const tabQuick         = document.getElementById('tab-quick');
+    const tabDetailed      = document.getElementById('tab-detailed');
+    const containerQuick   = document.getElementById('container-quick');
+    const containerDetailed= document.getElementById('container-detailed');
+    
+    const copyQuickBtn     = document.getElementById('btn-copy-quick');
+    const copyDetailedBtn  = document.getElementById('btn-copy-detailed');
+    const likeQuickBtn     = document.getElementById('btn-like-quick');
+    const likeDetailedBtn  = document.getElementById('btn-like-detailed');
+    
+    // سنسورهای جدید موشک جهت شلیک گسترش آنی
+    const extendQuickBtn   = document.getElementById('btn-extend-quick');
+    const extendDetailedBtn= document.getElementById('btn-extend-detailed');
+    const archetypeBtns    = document.querySelectorAll('.archetype-btn');
+
+    // 🔄 لیسنرهای دوقلوی دکمه بازتولید نئونی سایدپنل
+    const regenQuickBtn    = document.getElementById('btn-regen-quick');
+    const regenDetailedBtn = document.getElementById('btn-regen-detailed');
+
+    const navIncidentsBtn  = document.getElementById('nav-btn-incidents');
+
+    let accumulatedStreamText = ""; 
+
+    // 📢 لیسنر بلندگوی هدر: انتقال آنی به بورد رویدادهای زنده صرافی
+    if (navIncidentsBtn) {
+        navIncidentsBtn.addEventListener('click', () => {
+            chrome.tabs.create({ url: chrome.runtime.getURL("database.html?target=tab-incidents") });
+        });
     }
 
-    // قانون تفکیک ساختاری خروجی دوقلو
-    prompt += `قانون تفکیک مطلق خروجی:\n`;
-    prompt += `پاسخ شما الزاماً باید شامل دو بخش مجزا با تگ‌های دقیق [کوتاه] و [تشریحی] باشد.\n`;
-    prompt += `زیر تگ [کوتاه] حداکثر ۲ خط پاسخ بسیار سریع و فشرده بنویسید.\n`;
-    prompt += `زیر تگ [تشریحی] حداکثر ۱۲ خط پاسخ جامع، گام‌به‌گام و راهگشا ارائه دهید.\n\n`;
-
-    if (mode === 'expand' && targetText) {
-        prompt += `وظیفه شما 'گسترش آنی عمیق' است. متن زیر را که از خروجی قبلی برداشته شده، مبنا قرار دهید و آن را به صورت تخصصی، عمیق و بدون حاشیه‌پردازی‌های زاید توسعه دهید:\n`;
-        prompt += `متن مبنا: ${targetText}\n`;
-    } else {
-        prompt += `داده‌های ورودی کارشناس جهت پردازش:\n`;
-        prompt += `تاریخچه پاکسازی شده گفتگو: ${cleanedHistory}\n`;
-        prompt += `پیش‌نویس و نکات مدنظر کارشناس: ${draftContent}\n`;
-        prompt += `${topic}\n`;
+    if (openDatabaseBtn) {
+        openDatabaseBtn.addEventListener('click', () => { 
+            chrome.tabs.create({ url: chrome.runtime.getURL("database.html") });
+        });
     }
 
-    // ثبت درخواست کاربر در تاریخچه بصری اسلات
-    if (mode !== 'archetype_rewrite' && mode !== 'expand') {
-        slot.history.push({ sender: 'user', text: `درخواست پردازش موضوع: ${slot.topic || 'عمومی'} - نام: ${slot.clientName || 'نامشخص'}` });
-    } else if (mode === 'expand') {
-        slot.history.push({ sender: 'user', text: `درخواست گسترش آنی بخش خروجی` });
-    } else {
-        slot.history.push({ sender: 'user', text: `درخواست تغییر لحن به آرکیتایپ: ${slot.currentArchetype}` });
+    if (historyInput) {
+        historyInput.addEventListener('input', () => { getActiveSlot().rawHistoryInput = historyInput.value; saveSlotsState(); });
+    }
+    if (draftInput) {
+        draftInput.addEventListener('input', () => { getActiveSlot().draftInput = draftInput.value; saveSlotsState(); });
+    }
+    if (customerName) {
+        customerName.addEventListener('input', () => { getActiveSlot().customerName = customerName.value; saveSlotsState(); });
+    }
+    if (customerGender) {
+        customerGender.addEventListener('change', () => { getActiveSlot().customerGender = customerGender.value; saveSlotsState(); });
+    }
+    if (modelSelect) {
+        modelSelect.addEventListener('change', () => { getActiveSlot().selectedModel = modelSelect.value; saveSlotsState(); });
     }
 
-    // آماده‌سازی UI برای نمایش زنده استریم
-    document.getElementById('output-quick').textContent = "در حال اتصال به منبع استریم...";
-    document.getElementById('output-detailed').textContent = "در حال اتصال به منبع استریم...";
-    
-    // باز کردن کانال ارتباطی استریم با بک‌گراند افزونه
-    const port = chrome.runtime.connect({ name: "gemini-streaming-channel" });
-    
-    // ارسال پرامپت ساخته شده و تنظیمات مدل به بک‌گراند
-    port.postMessage({
-        action: "start_generation",
-        prompt: prompt,
-        agent: slot.activeAgent
-    });
-
-    let fullAccumulatedText = "";
-
-    // شنود چانک‌های دریافتی از استریم
-    port.onMessage.addListener((msg) => {
-        if (msg.status === "chunk" && msg.data) {
-            const cleanChunk = sanitizeStreamData(msg.data);
-            fullAccumulatedText += cleanChunk;
-            
-            // نمایش زنده متن خام جفت شده در هر دو باکس تا پیش از تفکیک نهایی
-            document.getElementById('output-quick').textContent = fullAccumulatedText;
-            document.getElementById('output-detailed').textContent = fullAccumulatedText;
-        } else if (msg.status === "done") {
-            processAndFinalizeOutput(fullAccumulatedText);
-            port.disconnect();
-        }
-    });
-
-    port.onDisconnect.addListener(() => {
-        console.log("کانال استریم بسته شد.");
-        // در صورتی که دیسکانکت شد اما پایان رسمی اعلام نشده بود، متن موجود را تفکیک کن
-        if (fullAccumulatedText && (slot.outputQuick.startsWith("در حال") || slot.outputQuick === fullAccumulatedText)) {
-            processAndFinalizeOutput(fullAccumulatedText);
-        }
-    });
-}
-
-// تابع تفکیک و تثبیت نهایی داده‌های خروجی دوقلو
-function processAndFinalizeOutput(rawText) {
-    const slot = slots[currentSlot];
-    if (!slot) return;
-
-    const parsed = parseDoubleOutput(rawText);
-    
-    slot.outputQuick = parsed.quick;
-    slot.outputDetailed = parsed.detailed;
-    
-    document.getElementById('output-quick').textContent = parsed.quick;
-    document.getElementById('output-detailed').textContent = parsed.detailed;
-    
-    // ثبت پاسخ نهایی بات در آرایه تاریخچه نمایش
-    slot.history.push({ sender: 'bot', text: `[پاسخ نهایی ثبت شده]\nکوتاه: ${parsed.quick}\n\nتشریحی: ${parsed.detailed}` });
-    
-    // بازنشانی وضعیت قلب‌ها
-    checkLikeStatusRemote(parsed.quick, 'btn-like-quick');
-    checkLikeStatusRemote(parsed.detailed, 'btn-like-detailed');
-    
-    renderActiveSlotToUI();
-    saveSlotsState();
-}
-
-// الگوریتم پارسر متن بر اساس تگ‌های [کوتاه] و [تشریحی]
-function parseDoubleOutput(text) {
-    let quick = "";
-    let detailed = "";
-    
-    const quickTagIndex = text.indexOf("[کوتاه]");
-    const detailedTagIndex = text.indexOf("[تشریحی]");
-    
-    if (quickTagIndex !== -1 && detailedTagIndex !== -1) {
-        if (quickTagIndex < detailedTagIndex) {
-            quick = text.substring(quickTagIndex + 7, detailedTagIndex).trim();
-            detailed = text.substring(detailedTagIndex + 8).trim();
-        } else {
-            detailed = text.substring(detailedTagIndex + 8, quickTagIndex).trim();
-            quick = text.substring(quickTagIndex + 7).trim();
-        }
-    } else if (quickTagIndex !== -1) {
-        quick = text.substring(quickTagIndex + 7).trim();
-        detailed = quick;
-    } else if (detailedTagIndex !== -1) {
-        detailed = text.substring(detailedTagIndex + 8).trim();
-        quick = detailed;
-    } else {
-        // فالبک در صورتی که مدل تگ‌ها را رعایت نکرده باشد
-        quick = text.trim();
-        detailed = text.trim();
+    if (issueTagSelect) {
+        issueTagSelect.addEventListener('change', () => {
+            if (issueTagSelect.value) {
+                const tagText = `[موضوع چت: ${issueTagSelect.value}]`;
+                if (!draftInput.value.includes(tagText)) {
+                    draftInput.value = (draftInput.value + ' ' + tagText).trim();
+                    getActiveSlot().draftInput = draftInput.value;
+                    saveSlotsState();
+                }
+                issueTagSelect.value = ""; 
+            }
+        });
     }
-    
-    return { quick, detailed };
-}
 
-// دکمه اصلی شروع عملیات تحلیل
-document.getElementById('btn-trigger-analysis').addEventListener('click', () => {
-    syncCurrentInputToState();
-    runCoreAnalysisEngine('normal');
-});
-
-// منطق دکمه‌های آرکیتایپ لحن پاسخدهی
-['normal', 'zeus', 'hestia', 'hades'].forEach(archKey => {
-    document.getElementById(`btn-arch-${archKey}`).addEventListener('click', () => {
-        if (!slots[currentSlot]) return;
-        slots[currentSlot].currentArchetype = archKey;
+    function loadSlotState(index) {
+        activeSlotIndex = index;
+        const slot = slots[index];
+        historyInput.value = slot.rawHistoryInput || '';
+        draftInput.value = slot.draftInput || '';
+        customerName.value = slot.customerName || '';
+        customerGender.value = slot.customerGender || 'male'; 
+        if (modelSelect) modelSelect.value = slot.selectedModel || 'gemini-3.1-flash-lite';
         
-        // تشخیص متن آخرین پاسخ برای بازنویسی مجدد آن
-        let activeTab = document.querySelector('.tab-btn.active').id;
-        let lastOutputText = "";
-        if (activeTab === 'tab-quick') {
-            lastOutputText = slots[currentSlot].outputQuick;
-        } else {
-            lastOutputText = slots[currentSlot].outputDetailed;
-        }
+        const currentQuickBox = document.getElementById('output-quick');
+        const currentDetailedBox = document.getElementById('output-detailed');
+        if (currentQuickBox) currentQuickBox.innerHTML = slot.lastQuickOutput || 'منتظر دریافت اطلاعات...';
+        if (currentDetailedBox) currentDetailedBox.innerHTML = slot.lastDetailedOutput || 'منتظر دریافت اطلاعات...';
         
-        if (!lastOutputText || lastOutputText.startsWith("در انتظار") || lastOutputText.startsWith("در حال")) {
-            // اگر خروجی نبود، کل موتور را با فرمول عادی صدا بزن
-            runCoreAnalysisEngine('archetype_rewrite');
-        } else {
-            // بازنویسی دقیق بر اساس متن موجود خروجی قبلی
-            runCoreAnalysisEngine('archetype_rewrite');
-        }
-    });
-});
+        if (slot.activeTab === 'quick' && tabQuick) tabQuick.click();
+        if (slot.activeTab === 'detailed' && tabDetailed) tabDetailed.click();
+        
+        if (likeQuickBtn) lilyCheckLikedState(slot.lastQuickOutput, likeQuickBtn);
+        if (likeDetailedBtn) lilyCheckLikedState(slot.lastDetailedOutput, likeDetailedBtn);
 
-// سوئیچ کادرهای پاسخ کوتاه و تشریحی (smokyToggleFix)
-function smokyToggleFix(targetTab) {
-    const tabQuick = document.getElementById('tab-quick');
-    const tabDetailed = document.getElementById('tab-detailed');
-    const boxQuick = document.getElementById('box-container-quick');
-    const boxDetailed = document.getElementById('box-container-detailed');
-    
-    if (targetTab === 'quick') {
-        tabQuick.classList.add('active');
-        tabDetailed.classList.remove('active');
-        boxQuick.classList.add('visible');
-        boxDetailed.classList.remove('visible');
-    } else {
-        tabDetailed.classList.add('active');
-        tabQuick.classList.remove('active');
-        boxDetailed.classList.add('visible');
-        boxQuick.classList.remove('visible');
+        renderHistoryList(slot);
     }
-}
 
-document.getElementById('tab-quick').addEventListener('click', () => smokyToggleFix('quick'));
-document.getElementById('tab-detailed').addEventListener('click', () => smokyToggleFix('detailed'));
+    function renderHistoryList(slot) {
+        if (!outputCard) return;
+        if (slot.history.length === 0) {
+            outputCard.innerHTML = `<div style="text-align: center; color: var(--text-muted); font-size: 11px; padding: 15px;">حافظه این صندلی پاک و آماده است.</div>`;
+            return;
+        }
 
-// منطق دکمه‌های کپی متن سیستم با افزودن موقت کلاس برای تعامل بهینه
-function setupCopyLogic(btnId, textContainerId) {
-    document.getElementById(btnId).addEventListener('click', function() {
-        const textToCopy = document.getElementById(textContainerId).textContent;
-        if (!textToCopy || textToCopy.startsWith("در انتظار")) return;
-        
-        navigator.clipboard.writeText(textToCopy).then(() => {
-            const self = this;
-            self.classList.add('copied');
-            const originalText = self.textContent;
-            self.textContent = "✓";
-            
-            setTimeout(() => {
-                self.classList.remove('copied');
-                self.textContent = originalText;
-            }, 1500);
-        }).catch(err => {
-            console.error('خطا در کپی متن: ', err);
+        let html = '';
+        slot.history.forEach(item => {
+            const isBot = item.role === 'model';
+            const bubbleClass = isBot ? 'chat-bubble-bot' : 'chat-bubble-user';
+            const roleLabel = isBot ? '🤖 خروجی دستیار' : '👤 کانتکست چت ثبت‌شده';
+            html += `
+                <div class="${bubbleClass}">
+                    <strong style="color: ${isBot ? 'var(--accent-blue)' : 'var(--accent-green)'}; font-size: 10px;">${roleLabel}:</strong>
+                    <div style="white-space: pre-wrap; margin-top: 3px;">${item.parts}</div>
+                </div>
+            `;
+        });
+        outputCard.innerHTML = html;
+        outputCard.scrollTop = outputCard.scrollHeight; 
+    }
+
+    tabButtons.forEach((tab, index) => {
+        tab.addEventListener('click', () => {
+            tabButtons.forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            activeSlotIndex = index;
+            loadSlotState(index);
         });
     });
-}
-setupCopyLogic('btn-copy-quick', 'output-quick');
-setupCopyLogic('btn-copy-detailed', 'output-detailed');
 
-// منطق لایک و ذخیره‌سازی پاسخ‌ها در بانک اطلاعاتی منتخبین (lilyTriggerLikeProcessor)
-function lilyTriggerLikeProcessor(btnId, textContainerId) {
-    document.getElementById(btnId).addEventListener('click', function() {
-        const textContent = document.getElementById(textContainerId).textContent;
-        if (!textContent || textContent.startsWith("در انتظار") || textContent.startsWith("در حال")) return;
-        
-        const self = this;
-        chrome.storage.local.get(['curatedResponsesDatabase'], (res) => {
-            let db = res.curatedResponsesDatabase || [];
-            const index = db.indexOf(textContent);
+    if (wipeSlotBtn) {
+        wipeSlotBtn.addEventListener('click', () => {
+            slots[activeSlotIndex] = createEmptySlot(activeSlotIndex);
+            saveSlotsState();
+            loadSlotState(activeSlotIndex);
+        });
+    }
+
+    // ============================================================================
+    // 🛡️ موتور غربالگری و فیلتراسیون کانتکست (TPM Shield Logic)
+    // برای جلوگیری از پر شدن سقف 250k توکن در دقیقه، کانتکست به صورت فشرده ارسال می‌شود [cite: image_980d27.png]
+    // ============================================================================
+    function buildOptimizedSystemKnowledge(scope, activeArchetype, callback) {
+        const targetKeys = [
+            'knowledgeShelfDatabase', 
+            'systemPromptsLibrary', 
+            'qcFeedbacksDatabase', 
+            'liveIncidentsDatabase', 
+            'curatedResponsesDatabase'
+        ];
+
+        chrome.storage.local.get(targetKeys, (res) => {
+            let masterPrompt = `شما دستیار و مغز دوم مقتدر، زرهی و کارشناس ارشد پشتیبانی صرافی (امیر) هستید.\n`;
             
-            if (index === -1) {
-                // افزودن به لایک‌ها
-                db.push(textContent);
-                self.textContent = "💜";
-            } else {
-                // حذف از لایک‌ها
-                db.splice(index, 1);
-                self.textContent = "🖤";
+            // 👤 اصلاح گرامری گپ جنسیت آقا (تبدیل سلام آقا کاربر به سلام آقای کاربر)
+            const activeSlot = getActiveSlot();
+            const genderTitle = activeSlot.customerGender === 'male' ? 'آقای' : 'خانم';
+            masterPrompt += `قاعده مهم گرامری احترام: در پیام‌های خروجی و زمان شروع همواره از کلمه صحیح "${genderTitle}" استفاده کنید (هرگز از لفظ آقا بدون ی استفاده نکنید، مثلاً بگویید "آقای امیر" یا "آقای کاربر عزیز").\n\n`;
+
+            // ۱. لود مینی‌مال پرامپت‌های بالادستی
+            const library = res.systemPromptsLibrary || [];
+            if (library.length > 0) {
+                masterPrompt += `--- پرامپت‌های بالادستی رفتاری سیستم ---\n`;
+                library.forEach(p => { masterPrompt += ` رویکرد [${p.title}]: ${p.body}\n`; });
+            }
+
+            // ۲. لود انحصاری بحران‌های 🔥 فعال سایت (بحران‌های معوق به کلی هرس می‌شوند)
+            const incidents = res.liveIncidentsDatabase || [];
+            const activeIncidents = incidents.filter(i => i.status === 'active');
+            if (activeIncidents.length > 0) {
+                masterPrompt += `\n📢 [بحران‌ها و رویدادهای زنده و فعال صرافی]:\n`;
+                activeIncidents.forEach(i => { masterPrompt += `- ${i.text}\n`; });
+            }
+
+            // ۳. غربالگری قوانین بر اساس اسکوپ انتخابی امیر (پدافند زرهی مهار TPM) [cite: image_980d27.png]
+            const documents = res.knowledgeShelfDatabase || [];
+            masterPrompt += `\n🎯 [کتابچه قوانین مرجع صرافی بیت‌پین]:\n`;
+            documents.forEach(doc => {
+                if (doc.scope === 'عمومی') {
+                    masterPrompt += ` سند عمومی [${doc.name}]: ${doc.content}\n`;
+                } else if (scope === 'تعهدی' && doc.scope === 'تعهدی') {
+                    masterPrompt += ` سند معاملات تعهدی [${doc.name}]: ${doc.content}\n`;
+                }
+            });
+
+            // ۴. لود هدفمند و فشرده کدهای ادغام سایه QC (حداکثر ۳ مورد آخر جهت اقتصاد توکن)
+            const qcFeedbacks = res.qcFeedbacksDatabase || [];
+            if (qcFeedbacks.length > 0) {
+                masterPrompt += `\n🛡️ [قوانین پنهان مهار سایه و خطاهای گذشته QC شده]:\n`;
+                const slicedQc = qcFeedbacks.slice(-3);
+                slicedQc.forEach((q, idx) => {
+                    masterPrompt += `پرونده مهار خطای ${idx+1}: نباید این اشتباه رخ دهد: "${q.wrong}" -> پاسخ صحیح و کالیبره‌شده: "${q.remedy}"\n`;
+                });
+            }
+
+            // ۵. لود نمایه شورت‌کات‌های پاسخ‌های طلایی گنجینه
+            const vault = res.curatedResponsesDatabase || [];
+            const hotVault = vault.filter(v => v.isHot);
+            if (hotVault.length > 0) {
+                masterPrompt += `\n⭐ [شورت‌کات‌ها و ماکروهای گنجینه پاسخ‌های طلایی]:\n`;
+                hotVault.forEach(v => {
+                    if (v.shortcutKey) masterPrompt += `- کلیدواژه میانبر: ${v.shortcutKey} | ساختار پاسخ طلایی: "${v.text}"\n`;
+                });
+            }
+
+            // ۶. تزریق بیانیه لحن کهن‌الگو (Archetype Trigger)
+            if (activeArchetype !== 'normal') {
+                masterPrompt += `\n🚨 [دستورالعمل لحن کهن‌الگو]: پاسخ را منحصراً در قالب فرکانس روانی [${activeArchetype}] فرمول‌بندی کنید.\n`;
+            }
+
+            masterPrompt += `\nفرمت رندر خروجی: شما باید پاسخ را در قالب دو بخش تفکیک‌شده رندر کنید. بخش اول پاسخ سریع با تگ [کوتاه] و بخش دوم پاسخ تشریحی با تگ [تشریحی] باشد.\n`;
+
+            callback(masterPrompt);
+        });
+    }
+
+    // ============================================================================
+    // 📡 موتور تحلیل و استریم مرکزی (مجهز به مدول توسعه آنی و تصحیح تفکیک لوپ)
+    // ============================================================================
+    function runCoreAnalysisEngine(isDirectExpansion = false, textToExpand = "") {
+        const slot = getActiveSlot();
+        const rawHist = historyInput.value.trim();
+        const rawDraft = draftInput.value.trim();
+
+        if (!rawHist && !rawDraft && !isDirectExpansion) return;
+
+        const cleanedHistory = cleanCRMHistory(rawHist);
+        const isRefinementMode = !cleanedHistory && rawDraft && !isDirectExpansion;
+
+        const selectedModel = modelSelect ? modelSelect.value : 'gemini-3.1-flash-lite';
+        const activeScope = slot.ticketScope || 'عمومی';
+        const archetype = slot.activeArchetype || 'normal';
+
+        // فراخوانی موتور هرس کانتکست کلاینت جهت مهار پهنای باند توکن‌ها
+        buildOptimizedSystemKnowledge(activeScope, archetype, (optimizedKnowledge) => {
+
+            let promptPayload = "";
+            let lengthRule = `🚨 قانون مطلق ساختار پاسخ:
+- نسخه [کوتاه]: خلاصه فشرده از پاسخ. حداکثر ۲ خط.
+- نسخه [تشریحی]: پاسخ اصلی، کامل، واضح و جامع است. حداکثر تا ۱۲ خط مجاز هستید.`;
+
+            if (isDirectExpansion) {
+                promptPayload += `🚨 دستور توسعه و گسترش عمیق: متن پاسخ زیر را به طور کامل، تخصصی و عمیق منبسط کن.\n\nمتن پاسخ جهت گسترش:\n${textToExpand}`;
+            } 
+            else if (isRefinementMode) {
+                const lastModelResponse = [...slot.history].reverse().find(h => h.role === 'model');
+                const lastAssistantReply = lastModelResponse ? lastModelResponse.parts : "";
+                promptPayload += `🚨 دستور اصلاحی کارشناس: ${rawDraft}\n\nمتن پاسخ قبلی دستیار که باید بر اساس این دستور ویرایش و اصلاح شود:\n${lastAssistantReply}`;
+            } 
+            else {
+                if (cleanedHistory) promptPayload += `تاریخچه مکالمه با کاربر:\n${cleanedHistory}\n\n`;
+                if (rawDraft) promptPayload += `پیش‌نویس یا ایده خام کارشناس برای بسط دادن:\n${rawDraft}\n\n`;
             }
             
-            chrome.storage.local.set({ 'curatedResponsesDatabase': db }, () => {
-                console.log('بانک اطلاعاتی منتخبین به‌روزرسانی شد.');
+            promptPayload += `\n\n🚨 ساختار خروجی الزامی:
+${lengthRule}
+تگ‌های [کوتاه] و [تشریحی] جهت تفکیک الزامی است.`;
+
+            // ذخیره اطلاعات جاری جهت پشتیبانی از کلید بازتولید
+            lastPromptCache = promptPayload;
+            lastSystemKnowledgeCache = optimizedKnowledge;
+
+            executeStreamingChannel(promptPayload, optimizedKnowledge, selectedModel, isDirectExpansion, isRefinementMode);
+        });
+    }
+
+    function executeStreamingChannel(prompt, knowledgeBase, modelId, isDirectExpansion, isRefinementMode) {
+        isStreamingActive = true;
+        analyzeBtn.disabled = true;
+        analyzeBtn.textContent = '⏳ در حال استریم زنده کلمات...';
+
+        const currentQuickBox = document.getElementById('output-quick');
+        const currentDetailedBox = document.getElementById('output-detailed');
+        if (currentQuickBox) currentQuickBox.innerHTML = "در حال فراخوانی مغز پردازشی...";
+        if (currentDetailedBox) currentDetailedBox.innerHTML = "در حال فراخوانی مغز پردازشی...";
+        accumulatedStreamText = ""; 
+
+        const activeStreamPort = chrome.runtime.connect({ name: "gemini-streaming-channel" });
+
+        activeStreamPort.onMessage.addListener((msg) => {
+            const liveQuickBox = document.getElementById('output-quick');
+            const liveDetailedBox = document.getElementById('output-detailed');
+
+            if (msg.status === "chunk") {
+                accumulatedStreamText += msg.value;
+                const polishedText = sanitizeStreamData(accumulatedStreamText);
+                const { quickVersion, detailedVersion } = parseDoubleOutput(polishedText);
+                
+                if (liveQuickBox) liveQuickBox.innerHTML = quickVersion;
+                if (liveDetailedBox) liveDetailedBox.innerHTML = detailedVersion;
+            } 
+            else if (msg.status === "done") {
+                const slot = getActiveSlot();
+                analyzeBtn.disabled = false;
+                analyzeBtn.textContent = '🚀 تحلیل و فرمول‌بندی پاسخ';
+                
+                const polishedText = sanitizeStreamData(accumulatedStreamText);
+                const { quickVersion, detailedVersion } = parseDoubleOutput(polishedText);
+                
+                slot.lastQuickOutput = quickVersion;
+                slot.lastDetailedOutput = detailedVersion;
+                
+                let contextStr = '';
+                if (isDirectExpansion) contextStr += `[توسعه رگباری با موشک]`;
+                else if (isRefinementMode) contextStr += `[اصلاحیه]`;
+                else {
+                    if (cleanCRMHistory(historyInput.value)) contextStr += cleanCRMHistory(historyInput.value) + '\n';
+                    if (draftInput.value.trim()) contextStr += draftInput.value.trim();
+                }
+                
+                slot.history.push({ role: 'user', parts: contextStr.trim() });
+                slot.history.push({ role: 'model', parts: polishedText });
+                
+                // پاکسازی ورودی‌ها پس از دریافت موفقیت‌آمیز پاسخ
+                historyInput.value = ''; slot.rawHistoryInput = '';
+                draftInput.value = ''; slot.draftInput = '';
+                saveSlotsState();
+                
+                if (tabDetailed) tabDetailed.click(); 
+                renderHistoryList(slot);
+                isStreamingActive = false;
+                activeStreamPort.disconnect(); 
+            } 
+            else if (msg.status === "error") {
+                analyzeBtn.disabled = false;
+                analyzeBtn.textContent = '🚀 تحلیل و فرمول‌بندی پاسخ';
+                if (liveDetailedBox) liveDetailedBox.innerHTML = `<span style="color: var(--accent-red)">❌ خطا: ${escapeHTML(msg.error)}</span>`;
+                isStreamingActive = false;
+                activeStreamPort.disconnect();
+            }
+        });
+
+        const slot = getActiveSlot();
+        const trimmedHistory = slot.history.slice(-10).map(h => ({ role: h.role, parts: h.parts }));
+
+        activeStreamPort.postMessage({
+            action: 'startStreaming',
+            modelId: modelId,
+            prompt: prompt,
+            knowledgeBase: knowledgeBase,
+            history: trimmedHistory
+        });
+    }
+
+    if (analyzeBtn) {
+        analyzeBtn.addEventListener('click', () => { runCoreAnalysisEngine(false, ""); });
+    }
+
+    // ============================================================================
+    // 🔄 لیسنرهای دکمه‌های بازتولید نئونی سایدپنل (🔄)
+    // ============================================================================
+    function runRegenerateEngine() {
+        if (isStreamingActive || !lastPromptCache || !lastSystemKnowledgeCache) {
+            showToast('خطا: هیچ کانتکستی در حافظه جاری جهت بازتولید یافت نشد.', true);
+            return;
+        }
+
+        const selectedModel = modelSelect.value;
+
+        // تزریق دستور حاکم و پنهان جهت تغییر آرایش کلمات سرور
+        const modifiedKnowledge = lastSystemKnowledgeCache + 
+            `\n🚨 [دستور پنهان و حاکم کارشناس ارشد به شبیه‌ساز]: پاسخ قبلی خود را به کلی فراموش کنید. همان مفاهیم قانونی و فنی صرافی را با استفاده از کلمات، چینش جملات و رویکرد بیانی کاملاً جدید، خلاقانه و متفاوت بازنویسی کنید تا لحنی جایگزین ایجاد شود.\n`;
+
+        isStreamingActive = true;
+        outputQuick.textContent = "در حال بازنویسی پاسخ سریع بازار...";
+        outputDetailed.textContent = "در حال بازنویسی پاسخ تشریحی...";
+
+        executeStreamingChannel(lastPromptCache, modifiedKnowledge, selectedModel, false, false);
+    }
+
+    if (regenQuickBtn) {
+        regenQuickBtn.addEventListener('click', () => {
+            // چرخش بصری ۱۸۰ درجه
+            regenQuickBtn.style.transform = "rotate(180deg)";
+            setTimeout(() => { regenQuickBtn.style.transform = "none"; }, 350);
+            runRegenerateEngine();
+        });
+    }
+
+    if (regenDetailedBtn) {
+        regenDetailedBtn.addEventListener('click', () => {
+            // چرخش بصری ۱۸۰ درجه
+            regenDetailedBtn.style.transform = "rotate(180deg)";
+            setTimeout(() => { regenDetailedBtn.style.transform = "none"; }, 350);
+            runRegenerateEngine();
+        });
+    }
+
+    // سنسورهای دکمه موشک: شلیک مستقیم فرآیند گسترش آنی
+    if (extendQuickBtn) {
+        extendQuickBtn.addEventListener('click', () => {
+            const currentTxt = document.getElementById('output-quick')?.textContent || "";
+            if (currentTxt && !currentTxt.startsWith("منتظر دریافت") && !currentTxt.startsWith("در حال فراخوانی")) {
+                runCoreAnalysisEngine(true, currentTxt);
+            }
+        });
+    }
+
+    if (extendDetailedBtn) {
+        extendDetailedBtn.addEventListener('click', () => {
+            const currentTxt = document.getElementById('output-detailed')?.textContent || "";
+            if (currentTxt && !currentTxt.startsWith("منتظر دریافت") && !currentTxt.startsWith("در حال فراخوانی")) {
+                runCoreAnalysisEngine(true, currentTxt);
+            }
+        });
+    }
+
+    // ============================================================================
+    // 📋 سنسور دکمه‌های کپی مینی‌مال
+    // ============================================================================
+    if (copyQuickBtn) {
+        copyQuickBtn.addEventListener('click', async () => {
+            const payload = document.getElementById('output-quick')?.textContent || "";
+            if (payload && !payload.startsWith("منتظر دریافت") && !payload.startsWith("در حال فراخوانی")) {
+                await navigator.clipboard.writeText(payload.trim());
+                copyQuickBtn.classList.add('copied');
+                setTimeout(() => { copyQuickBtn.classList.remove('copied'); }, 1200);
+            }
+        });
+    }
+
+    if (copyDetailedBtn) {
+        copyDetailedBtn.addEventListener('click', async () => {
+            const payload = document.getElementById('output-detailed')?.textContent || "";
+            if (payload && !payload.startsWith("منتظر دریافت") && !payload.startsWith("در حال فراخوانی")) {
+                await navigator.clipboard.writeText(payload.trim());
+                copyDetailedBtn.classList.add('copied');
+                setTimeout(() => { copyDetailedBtn.classList.remove('copied'); }, 1200);
+            }
+        });
+    }
+
+    // ============================================================================
+    // 💜 سنسور لایک هوشمند با مدیریت وضعیت قلب بنفش توخالی و توپر
+    // ============================================================================
+    if (likeQuickBtn) { likeQuickBtn.addEventListener('click', () => lilyTriggerLikeProcessor('output-quick', likeQuickBtn, '⚡ کوتاه')); }
+    if (likeDetailedBtn) { likeDetailedBtn.addEventListener('click', () => lilyTriggerLikeProcessor('output-detailed', likeDetailedBtn, '🔧 تشریحی')); }
+
+    function lilyTriggerLikeProcessor(boxId, btnEl, responseType) {
+        const textPayload = document.getElementById(boxId)?.textContent || "";
+        if (!textPayload || textPayload.startsWith("منتظر دریافت") || textPayload.startsWith("در حال فراخوانی")) return;
+        
+        const slot = getActiveSlot();
+        chrome.storage.local.get(['curatedResponsesDatabase'], (res) => {
+            let vault = res.curatedResponsesDatabase || [];
+            const existingIdx = vault.findIndex(v => v.text === textPayload.trim());
+            
+            if (existingIdx === -1) {
+                vault.push({
+                    text: textPayload.trim(),
+                    customerName: slot.customerName || "کاربر نامشخص",
+                    issueTag: responseType,
+                    timestamp: Date.now()
+                });
+                btnEl.textContent = "💜"; btnEl.classList.add('liked');
+            } else {
+                vault.splice(existingIdx, 1);
+                btnEl.textContent = "🖤"; btnEl.classList.remove('liked');
+            }
+            chrome.storage.local.set({ curatedResponsesDatabase: vault });
+        });
+    }
+
+    function lilyCheckLikedState(text, btnEl) {
+        if(!text || text.startsWith("منتظر دریافت")) { btnEl.textContent = "🖤"; btnEl.classList.remove('liked'); return; }
+        chrome.storage.local.get(['curatedResponsesDatabase'], (res) => {
+            const vault = res.curatedResponsesDatabase || [];
+            const exists = vault.some(v => v.text === text.trim());
+            if (exists) { btnEl.textContent = "💜"; btnEl.classList.add('liked'); }
+            else { btnEl.textContent = "🖤"; btnEl.classList.remove('liked'); }
+        });
+    }
+
+    // ============================================================================
+    // 🎭 دکمه‌های کالیبراسیون لحن
+    // ============================================================================
+    archetypeBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const archKey = btn.dataset.archetype;
+            const promptModifier = ARCHETYPES[archKey];
+            const slot = getActiveSlot();
+            if (!promptModifier || slot.history.length === 0) return;
+
+            const lastModelIdx = [...slot.history].reverse().findIndex(h => h.role === 'model');
+            if (lastModelIdx === -1) return;
+            const actualIdx = slot.history.length - 1 - lastModelIdx;
+            const textToRewrite = slot.history[actualIdx].parts;
+
+            const originalText = btn.textContent;
+            btn.textContent = '⏳...'; btn.disabled = true;
+
+            const fullPrompt = `${promptModifier}\n\nمتن پاسخ فعلی جهت دگرگونی لحن:\n${textToRewrite}`;
+            let masterInstruction = "شما دستیار پشتیبانی صرافی بیت‌پین هستید.\n" + getShiftContext();
+
+            const activeRewritePort = chrome.runtime.connect({ name: "gemini-streaming-channel" });
+
+            activeRewritePort.onMessage.addListener((msg) => {
+                const liveQuickBox = document.getElementById('output-quick');
+                const liveDetailedBox = document.getElementById('output-detailed');
+
+                if (msg.status === "chunk") {
+                    accumulatedStreamText += msg.value;
+                    const polishedText = sanitizeStreamData(accumulatedStreamText);
+                    const { quickVersion, detailedVersion } = parseDoubleOutput(polishedText);
+                    if (liveQuickBox) liveQuickBox.innerHTML = quickVersion;
+                    if (liveDetailedBox) liveDetailedBox.innerHTML = detailedVersion;
+                }
+                else if (msg.status === "done") {
+                    btn.textContent = originalText; btn.disabled = false;
+                    
+                    const polishedText = sanitizeStreamData(accumulatedStreamText);
+                    const { quickVersion, detailedVersion } = parseDoubleOutput(polishedText);
+                    
+                    slot.lastQuickOutput = quickVersion;
+                    slot.lastDetailedOutput = detailedVersion;
+                    slot.history[actualIdx].parts = polishedText;
+                    
+                    saveSlotsState();
+                    renderHistoryList(slot);
+                    activeRewritePort.disconnect();
+                }
+                else if (msg.status === "error") {
+                    btn.textContent = originalText; btn.disabled = false;
+                    activeRewritePort.disconnect();
+                }
+            });
+
+            activeRewritePort.postMessage({
+                action: 'startStreaming',
+                modelId: slot.selectedModel,
+                prompt: fullPrompt,
+                knowledgeBase: masterInstruction,
+                history: [] 
             });
         });
     });
-}
-lilyTriggerLikeProcessor('btn-like-quick', 'output-quick');
-lilyTriggerLikeProcessor('btn-like-detailed', 'output-detailed');
 
-// چک کردن وضعیت لایک در دیتابیس لوکال برای رندر صحیح آیکون قلبی شکل
-function checkLikeStatusRemote(text, btnId) {
-    const btn = document.getElementById(btnId);
-    if (!btn) return;
-    if (!text || text.startsWith("در انتظار") || text.startsWith("در حال")) {
-        btn.textContent = "🖤";
-        return;
-    }
-    chrome.storage.local.get(['curatedResponsesDatabase'], (res) => {
-        let db = res.curatedResponsesDatabase || [];
-        if (db.includes(text)) {
-            btn.textContent = "💜";
-        } else {
-            btn.textContent = "🖤";
+    function smokyToggleFix() {
+        if (tabQuick && tabDetailed) {
+            tabQuick.addEventListener('click', () => { 
+                tabQuick.classList.add('active'); tabDetailed.classList.remove('active'); 
+                containerQuick.classList.add('visible'); containerDetailed.classList.remove('visible'); 
+                getActiveSlot().activeTab = 'quick'; saveSlotsState();
+            });
+            tabDetailed.addEventListener('click', () => { 
+                tabDetailed.classList.add('active'); tabQuick.classList.remove('active'); 
+                containerDetailed.classList.add('visible'); containerQuick.classList.remove('visible'); 
+                getActiveSlot().activeTab = 'detailed'; saveSlotsState();
+            });
         }
-    });
-}
-
-// دکمه‌های موشک (گسترش آنی عمیق بدون حاشیه)
-document.getElementById('btn-expand-quick').addEventListener('click', () => {
-    const text = slots[currentSlot]?.outputQuick;
-    if (!text || text.startsWith("در انتظار")) return;
-    runCoreAnalysisEngine('expand', text);
-});
-
-document.getElementById('btn-expand-detailed').addEventListener('click', () => {
-    const text = slots[currentSlot]?.outputDetailed;
-    if (!text || text.startsWith("در انتظار")) return;
-    runCoreAnalysisEngine('expand', text);
-});
-
-// دکمه پاکسازی کل ذهن اسلات فعلی (Wipe Slot)
-document.getElementById('btn-wipe-current-slot').addEventListener('click', () => {
-    if (confirm("آیا از پاکسازی تمام داده‌های اسلات فعلی اطمینان دارید؟")) {
-        slots[currentSlot] = createEmptySlot();
-        renderActiveSlotToUI();
-        saveSlotsState();
     }
-});
+    smokyToggleFix();
 
-// دکمه‌های فرعی هدر (پایگاه داده و رادار) برای توسعه‌های آتی
-document.getElementById('btn-open-database').addEventListener('click', () => {
-    alert("سیستم دسترسی به پایگاه داده پاسخ‌های لایک شده فعال است. جهت توسعه متصل به لوکال استوریج.");
-});
-document.getElementById('btn-open-radar').addEventListener('click', () => {
-    alert("رادار مانیتورینگ شبکه و بررسی ترندهای صرافی با موفقیت فعالسازی شد.");
-});
+    function parseDoubleOutput(fullReply) {
+        let quickVersion = fullReply; let detailedVersion = fullReply;
+        const shortMatch = fullReply.match(/\[کوتاه\]([\s\S]*?)(?=\[تشریحی\]|$)/);
+        const longMatch = fullReply.match(/\[تشریحی\]([\s\S]*?)$/);
+        if (shortMatch && shortMatch[1]) quickVersion = shortMatch[1].trim();
+        if (longMatch && longMatch[1]) detailedVersion = longMatch[1].trim();
+        return { quickVersion, detailedVersion };
+    }
 
-// آغازین‌سازی برنامه با بالا آمدن ساید‌پنل
-document.addEventListener('DOMContentLoaded', () => {
-    loadSlotsState();
+    function escapeHTML(str) { if (!str) return ''; const div = document.createElement('div'); div.textContent = str; return div.innerHTML; }
+
+    loadSlotsState(() => { loadSlotState(0); });
 });
+```
